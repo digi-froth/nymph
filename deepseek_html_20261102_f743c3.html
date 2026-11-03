@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>粉紫光斑 · Spotlight</title>
+<style>
+  :root{
+    /* 光斑位置（离开屏幕时置为 -9999px） */
+    --x: -9999px;
+    --y: -9999px;
+    /* 小光点位置（保留最后位置，便于淡出） */
+    --px: -9999px;
+    --py: -9999px;
+    /* 光斑半径 */
+    --r: clamp(150px, 24vmax, 380px);
+  }
+
+  *, *::before, *::after{ box-sizing: border-box; }
+
+  html, body{
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background: #04050f;              /* 首屏即深色，杜绝白屏 */
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;               /* 触摸滑动更跟手 */
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* ---------- 底层：深深浅浅的粉紫渐变 ---------- */
+  .base{
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(52vmax 52vmax at 18% 10%, rgba(255,126,208,.95) 0%, rgba(255,126,208,0) 62%),
+      radial-gradient(60vmax 60vmax at 86% 18%, rgba(158,100,255,.92) 0%, rgba(158,100,255,0) 64%),
+      radial-gradient(48vmax 48vmax at 74% 88%, rgba(255,76,168,.88)  0%, rgba(255,76,168,0)  62%),
+      radial-gradient(58vmax 58vmax at 10% 84%, rgba(98,70,255,.90)   0%, rgba(98,70,255,0)   64%),
+      radial-gradient(44vmax 44vmax at 52% 48%, rgba(216,102,255,.55) 0%, rgba(216,102,255,0) 68%),
+      linear-gradient(155deg, #3b1055 0%, #1d0a3c 42%, #08030f 100%);
+    transform-origin: 35% 40%;
+    animation: drift 30s ease-in-out infinite alternate;
+    will-change: transform;
+  }
+
+  @keyframes drift{
+    from{ transform: scale(1); }
+    to  { transform: scale(1.14); }
+  }
+
+  /* ---------- 顶层：深色遮罩（中心挖一个跟随指针的柔光洞） ---------- */
+  .veil{
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: radial-gradient(
+      circle var(--r) at var(--x) var(--y),
+      rgba(4, 6, 20, 0)    0%,
+      rgba(4, 6, 20, 0.02) 20%,
+      rgba(4, 6, 20, 0.07) 35%,
+      rgba(4, 6, 20, 0.18) 50%,
+      rgba(4, 6, 20, 0.34) 62%,
+      rgba(4, 6, 20, 0.55) 74%,
+      rgba(4, 6, 20, 0.78) 86%,
+      rgba(4, 6, 20, 0.94) 95%,
+      rgba(4, 6, 20, 1)    100%
+    );
+  }
+
+  /* ---------- 发光小光点 ---------- */
+  .dot{
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 2;
+    width: 16px;
+    height: 16px;
+    margin: -8px 0 0 -8px;
+    border-radius: 50%;
+    pointer-events: none;
+    transform: translate3d(var(--px), var(--py), 0);
+    background: radial-gradient(circle,
+      #ffffff 0%,
+      rgba(255,240,253,.95) 26%,
+      rgba(255,164,232,.55) 56%,
+      rgba(190,120,255,0)   100%);
+    box-shadow:
+      0 0 12px 3px  rgba(255,160,230,.55),
+      0 0 36px 12px rgba(170,105,255,.30),
+      0 0 84px 32px rgba(120,80,255,.14);
+    opacity: 0;
+    transition: opacity .35s ease;
+    will-change: transform, opacity;
+  }
+
+  body.is-active .dot{ opacity: 1; }
+
+  /* ---------- 无障碍：尊重「减少动态效果」 ---------- */
+  @media (prefers-reduced-motion: reduce){
+    .base{ animation: none; }
+    .dot{ transition: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="base" aria-hidden="true"></div>
+  <div class="veil" aria-hidden="true"></div>
+  <div class="dot"  aria-hidden="true"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var root = document.documentElement;
+  var body = document.body;
+  var OFF = -9999;
+
+  var rafId = 0;      // requestAnimationFrame 句柄
+  var pending = null; // 待应用的坐标
+  var isOn = false;   // 光斑是否处于激活状态
+
+  function setVar(name, value) {
+    root.style.setProperty(name, value + 'px');
+  }
+
+  /* 每帧只写一次 CSS 变量 */
+  function paint() {
+    rafId = 0;
+    if (!pending) return;
+
+    var x = pending.x;
+    var y = pending.y;
+    pending = null;
+
+    setVar('--x', x);
+    setVar('--y', y);
+    setVar('--px', x);
+    setVar('--py', y);
+
+    if (!isOn) {
+      isOn = true;
+      body.classList.add('is-active');
+    }
+  }
+
+  /* rAF 节流：同一帧内多次 pointermove 只处理最后一次 */
+  function schedule(x, y) {
+    pending = { x: x, y: y };
+    if (!rafId) rafId = requestAnimationFrame(paint);
+  }
+
+  /* 移出页面：光斑移出屏幕 → 页面重归黑暗 */
+  function hide() {
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+    pending = null;
+
+    if (isOn) {
+      isOn = false;
+      body.classList.remove('is-active');
+    }
+
+    setVar('--x', OFF);
+    setVar('--y', OFF);
+    /* --px / --py 保持不动，让小光点在原地淡出 */
+  }
+
+  function onMove(e) {
+    if (e.isPrimary === false) return;   // 多点触控只跟随主指针
+    schedule(e.clientX, e.clientY);
+  }
+
+  function onOut(e) {
+    // relatedTarget 为 null 说明指针离开了窗口
+    if (!e.relatedTarget) hide();
+  }
+
+  window.addEventListener('pointermove', onMove, { passive: true });
+  window.addEventListener('pointerdown', onMove, { passive: true });
+  document.addEventListener('pointerout', onOut, { passive: true });
+  document.documentElement.addEventListener('pointerleave', hide, { passive: true });
+  document.addEventListener('pointercancel', hide, { passive: true });
+})();
+</script>
+</body>
+</html>
